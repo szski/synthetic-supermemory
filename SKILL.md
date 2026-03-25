@@ -101,6 +101,14 @@ node scripts/add.js --container my-agent --content "User prefers dark mode"
 node scripts/search.js --container my-agent --query "payment integration"
 ```
 
+## Pairing with session-scribe
+
+For a full automated memory pipeline:
+
+1. **[session-scribe-openclaw](https://clawhub.ai/kitsune/session-scribe-openclaw)** runs hourly → appends to `memory/YYYY-MM-DD.md`
+2. **synthetic-supermemory ingest** runs every 2h → syncs changed files to Supermemory
+3. **synthetic-supermemory recall** at session start → enriched context from past sessions
+
 ## References
 
 - [references/api.md](references/api.md) — Full API reference for advanced operations (batch add, delete, container management, conversations)
