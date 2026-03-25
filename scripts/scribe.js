@@ -110,8 +110,12 @@ function discoverAllSessions() {
     for (const [key, entry] of Object.entries(sessions)) {
       if (!entry.sessionId) continue;
 
-      // Only include sessions with recent activity
-      const lastActivity = entry.lastActivityMs || entry.updatedAtMs || 0;
+      // Use transcript file mtime as activity signal (lastActivityMs not always populated)
+      const transcriptMtime = (() => {
+        try { return fs.statSync(path.join(dir, `${entry.sessionId}.jsonl`)).mtimeMs; }
+        catch { return 0; }
+      })();
+      const lastActivity = entry.lastActivityMs || entry.updatedAtMs || transcriptMtime;
       if (!lastActivity || lastActivity < activeSince) continue;
 
       // Skip cron/isolated sessions — only scribe real conversations
