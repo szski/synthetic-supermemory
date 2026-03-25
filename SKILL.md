@@ -1,5 +1,5 @@
 ---
-name: supermemory
+name: synthetic-supermemory
 description: Long-term semantic memory via Supermemory API. Use when you need to store memories for later recall, search existing memories, ingest files or workspace context into memory, or retrieve relevant context at session startup. Triggers on requests like "remember this", "what do you know about X", "ingest my memory files", "recall context", "add this to memory", or any task requiring persistent memory across sessions. Agent-agnostic — use containerTag to namespace memories per agent or user.
 metadata:
   openclaw:
