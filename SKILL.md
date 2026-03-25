@@ -1,114 +1,118 @@
 ---
 name: synthetic-supermemory
-description: Long-term semantic memory via Supermemory API. Use when you need to store memories for later recall, search existing memories, ingest files or workspace context into memory, or retrieve relevant context at session startup. Triggers on requests like "remember this", "what do you know about X", "ingest my memory files", "recall context", "add this to memory", or any task requiring persistent memory across sessions. Agent-agnostic — use containerTag to namespace memories per agent or user.
+description: Full automated memory pipeline for OpenClaw agents. Scribe session transcripts into structured daily memory files, ingest them into Supermemory for semantic recall, and retrieve enriched context at session startup. Use when you want persistent memory across sessions without agent self-reporting. Triggers on requests like "set up memory", "remember sessions", "recall context", "ingest memory files", "search memories", or any task requiring long-term agent memory. Requires SUPERMEMORY_API_KEY and OPENAI_API_KEY (or ANTHROPIC_API_KEY).
 metadata:
   openclaw:
     emoji: "🧠"
     requires:
-      env: ["SUPERMEMORY_API_KEY"]
+      bins: ["node"]
+      env: ["SUPERMEMORY_API_KEY", "OPENAI_API_KEY"]
     primaryEnv: "SUPERMEMORY_API_KEY"
 ---
 
-# Supermemory
+# synthetic-supermemory
 
-Persistent semantic memory. Store anything, recall it later by meaning — not just keywords.
+Full memory pipeline for OpenClaw agents. Three components that work together:
 
-Key concept: **containerTag** namespaces memories per agent/user. Use a consistent tag (e.g. `sapphire`, `aria`, `user-123`) to keep memories isolated and retrievable.
+```
+session transcripts
+      ↓ scribe.js (hourly system cron)
+memory/YYYY-MM-DD.md
+      ↓ ingest.js (every 2h system cron)
+Supermemory (containerTag per agent)
+      ↓ recall.js (session startup)
+enriched context
+```
 
-## Setup
+No gateway involvement. No context bloat. Fully automated.
+
+## ⚠️ Privacy notice
+
+`scribe.js` sends conversation transcript content to an external LLM (OpenAI or Anthropic) for summarization. If your sessions contain secrets, API keys, or PII — be aware that content will be sent to the provider. Use a dedicated low-privilege API key with spend limits.
+
+## Quick setup
 
 ```bash
-# Install SDK
-npm install supermemory
+# Install dependencies
+cd /path/to/skills/synthetic-supermemory && npm install
 
-# Verify key
-echo $SUPERMEMORY_API_KEY
+# Store keys securely (do NOT put secrets in crontab)
+mkdir -p ~/.openclaw/secrets
+echo "sk-your-openai-key" > ~/.openclaw/secrets/scribe-key && chmod 600 ~/.openclaw/secrets/scribe-key
+echo "sm-your-supermemory-key" > ~/.openclaw/secrets/supermemory-key && chmod 600 ~/.openclaw/secrets/supermemory-key
+
+# Test scribe (dry-run)
+SUPERMEMORY_API_KEY=$(cat ~/.openclaw/secrets/supermemory-key) \
+node scripts/scribe.js \
+  --agents-dir ~/.openclaw/agents \
+  --all-sessions \
+  --memory-dir ~/.openclaw/workspace/memory \
+  --api-key-file ~/.openclaw/secrets/scribe-key \
+  --dry-run
+
+# Test recall
+SUPERMEMORY_API_KEY=$(cat ~/.openclaw/secrets/supermemory-key) \
+node scripts/recall.js --container my-agent
 ```
 
-## Core Operations
+## Cron setup (add via `crontab -e`)
 
-### Add a memory
-```js
-const client = new Supermemory({ apiKey: process.env.SUPERMEMORY_API_KEY });
+```bash
+# Scribe active sessions hourly
+0 * * * * SUPERMEMORY_API_KEY=$(cat ~/.openclaw/secrets/supermemory-key) node /path/to/synthetic-supermemory/scripts/scribe.js --agents-dir ~/.openclaw/agents --all-sessions --memory-dir ~/.openclaw/workspace/memory --api-key-file ~/.openclaw/secrets/scribe-key >> /tmp/scribe.log 2>&1
 
-await client.add({
-  content: "The user prefers Python over Node for backend work.",
-  containerTag: "my-agent",  // namespace
-  metadata: { source: "conversation", date: new Date().toISOString() }
-});
-```
-
-### Search memories
-```js
-const results = await client.search.documents({
-  q: "programming language preferences",
-  containerTag: "my-agent",
-  threshold: 0.5,
-  limit: 10
-});
-results.results.forEach(r => {
-  const text = r.chunks?.[0]?.content || r.title || '';
-  console.log(text);
-});
-```
-
-### Get user profile (static + dynamic context)
-```js
-const profile = await client.profile({
-  containerTag: "my-agent",
-  q: "recent context and identity",
-  threshold: 0.5
-});
-
-const staticFacts = profile.profile?.static || [];
-const recentContext = profile.profile?.dynamic || [];
-const memories = profile.searchResults?.results || [];
-```
-
-### Ingest a file
-```js
-await client.add({
-  content: fs.readFileSync('/path/to/file.md', 'utf8'),
-  containerTag: "my-agent",
-  metadata: { source: "file", path: "/path/to/file.md" }
-});
-```
-
-### Forget a memory
-```js
-await client.memories.forget({ memoryId: "<id>" });
+# Ingest changed memory files into Supermemory every 2 hours
+0 */2 * * * SUPERMEMORY_API_KEY=$(cat ~/.openclaw/secrets/supermemory-key) node /path/to/synthetic-supermemory/scripts/ingest.js --dir ~/.openclaw/workspace/memory --container my-agent >> /tmp/ingest.log 2>&1
 ```
 
 ## Scripts
 
-- **[scripts/ingest.js](scripts/ingest.js)** — Ingest a file or directory of markdown files into a containerTag. Change-tracked (skips unchanged files).
-- **[scripts/recall.js](scripts/recall.js)** — Recall context for a containerTag. Prints static facts, dynamic context, and relevant memories. Use at session startup.
-- **[scripts/add.js](scripts/add.js)** — Add a single memory from stdin or CLI arg.
-- **[scripts/search.js](scripts/search.js)** — Search memories and print results.
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `scribe.js` | Summarize session transcripts → daily memory files + Supermemory | Hourly cron |
+| `ingest.js` | Ingest changed memory files → Supermemory (upsert, change-tracked) | Every 2h cron |
+| `recall.js` | Retrieve context at session startup | Session start |
+| `add.js` | Add a single memory from CLI or stdin | On demand |
+| `search.js` | Semantic search across memories | On demand |
 
-Usage:
+## scribe.js options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--agents-dir <dir>` | OpenClaw agents directory | — |
+| `--all-sessions` | Scribe all recently active sessions | — |
+| `--sessions <dir>` | Single agent sessions directory | — |
+| `--session-id <id>` | Specific session UUID | — |
+| `--auto-session <key>` | Auto-resolve session by key suffix | — |
+| `--memory-dir <dir>` | Directory for daily memory files | required |
+| `--provider <name>` | LLM provider: `openai` or `anthropic` | auto-detected |
+| `--model <model>` | Summarization model | `gpt-4o-mini` |
+| `--api-key-file <path>` | LLM API key file (600 permissions) | — |
+| `--sm-container <tag>` | Supermemory container override | `--agent` value |
+| `--agent <id>` | Agent label for memory headers | `agent` |
+| `--active-within-hours <n>` | Only scribe sessions active within window | `1` |
+| `--min-turns <n>` | Minimum new turns before scribing | `3` |
+| `--dry-run` | Print without writing | false |
+
+## ingest.js / recall.js / search.js / add.js options
+
+All take `--container <tag>` to namespace memories per agent.
+
 ```bash
-# Ingest a workspace directory
-node scripts/ingest.js --dir /path/to/workspace --container my-agent
+# Ingest a directory
+node scripts/ingest.js --dir ~/.openclaw/workspace/memory --container sapphire
 
 # Recall context at session start
-node scripts/recall.js --container my-agent --query "who am I, recent projects"
+node scripts/recall.js --container sapphire --query "recent projects and identity"
 
 # Add a one-off memory
-node scripts/add.js --container my-agent --content "User prefers dark mode"
+node scripts/add.js --container sapphire --content "Kitsune prefers dark mode"
 
 # Search
-node scripts/search.js --container my-agent --query "payment integration"
+node scripts/search.js --container sapphire --query "TokTeam deployment"
 ```
-
-## Pairing with session-scribe
-
-For a full automated memory pipeline:
-
-1. **[session-scribe-openclaw](https://clawhub.ai/kitsune/session-scribe-openclaw)** runs hourly → appends to `memory/YYYY-MM-DD.md`
-2. **synthetic-supermemory ingest** runs every 2h → syncs changed files to Supermemory
-3. **synthetic-supermemory recall** at session start → enriched context from past sessions
 
 ## References
 
-- [references/api.md](references/api.md) — Full API reference for advanced operations (batch add, delete, container management, conversations)
+- [references/api.md](references/api.md) — Full Supermemory API reference (batch add, delete, container management)
+- [references/transcript-format.md](references/transcript-format.md) — OpenClaw session transcript JSONL structure
