@@ -48,12 +48,19 @@ function mtime(p) {
   catch { return 0; }
 }
 
-function collectFiles(dirPath, exts = ['.md', '.txt']) {
+// Skip directories that should never be ingested
+const SKIP_DIRS = new Set(['node_modules', '.git', 'skills', 'scripts', 'projects', 'tmp', 'dist', 'build', 'extensions']);
+
+function collectFiles(dirPath, exts = ['.md', '.txt'], depth = 0) {
+  if (depth > 3) return []; // safety limit
   const results = [];
   for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
     const full = path.join(dirPath, entry.name);
-    if (entry.isDirectory() && !entry.name.startsWith('.')) {
-      results.push(...collectFiles(full, exts));
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name)) {
+        results.push(...collectFiles(full, exts, depth + 1));
+      }
     } else if (entry.isFile() && exts.some(e => entry.name.endsWith(e))) {
       results.push(full);
     }
